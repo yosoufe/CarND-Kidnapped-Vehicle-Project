@@ -10,6 +10,7 @@
 #define PARTICLE_FILTER_H_
 
 #include "helper_functions.h"
+#include "Eigen/Dense"
 
 struct Particle {
 
@@ -28,10 +29,10 @@ struct Particle {
 class ParticleFilter {
 	
 	// Number of particles to draw
-	int num_particles; 
-	
-	
-	
+	int num_particles;
+
+
+
 	// Flag, if filter is initialized
 	bool is_initialized;
 	
@@ -81,8 +82,8 @@ public:
 	void dataAssociation(std::vector<LandmarkObs> predicted, std::vector<LandmarkObs>& observations);
 	
 	/**
-	 * updateWeights Updates the weights for each particle based on the likelihood of the 
-	 *   observed measurements. 
+	 * updateWeights Updates the weights for each particle based on the likelihood of the
+	 *   observed measurements.
 	 * @param sensor_range Range [m] of sensor
 	 * @param std_landmark[] Array of dimension 2 [standard deviation of range [m],
 	 *   standard deviation of bearing [rad]]
@@ -103,7 +104,7 @@ public:
 	 * This can be a very useful debugging tool to make sure transformations are correct and assocations correctly connected
 	 */
 	Particle SetAssociations(Particle particle, std::vector<int> associations, std::vector<double> sense_x, std::vector<double> sense_y);
-	
+
 	std::string getAssociations(Particle best);
 	std::string getSenseX(Particle best);
 	std::string getSenseY(Particle best);
@@ -114,8 +115,8 @@ public:
 	const bool initialized() const {
 		return is_initialized;
 	}
+
+private:
+	LandmarkObs glob2particle(Map::single_landmark_s g_lnmk, Particle particle);
 };
-
-
-
 #endif /* PARTICLE_FILTER_H_ */

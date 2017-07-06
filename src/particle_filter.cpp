@@ -121,7 +121,14 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
 			double dist = sqrt( pow( lndMrk.x_f - prtcl.x ,2) + pow( lndMrk.y_f - prtcl.y ,2));
 			if (dist < sensor_range){
 				// transform landmark to particle coordinate
-				LandmarkObs pred_lm = glob2particle(lndMrk,prtcl);
+				//LandmarkObs pred_lm = glob2particle(lndMrk,prtcl);
+
+				LandmarkObs pred_lm; // = glob2particle(lndMrk,prtcl)
+
+				pred_lm.x = cos(prtcl.theta)*((double)lndMrk.x_f - prtcl.x) + sin(prtcl.theta)*((double)lndMrk.y_f - prtcl.y);
+				pred_lm.y = cos(prtcl.theta)*((double)lndMrk.y_f - prtcl.y) + sin(prtcl.theta)*(prtcl.x - (double)lndMrk.x_f);
+				pred_lm.id = lndMrk.id_i;
+
 				predicted.push_back(pred_lm);
 			}
 		}
@@ -149,7 +156,7 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
 		weights[it_prtcl - particles.begin()] /= sum_weigths;
 	}
 }
-
+/*
 LandmarkObs ParticleFilter::glob2particle(Map::single_landmark_s g_lnmk, Particle particle){
 	LandmarkObs lndMkObs;
 	Eigen::MatrixXd R_c2g(2,2);
@@ -164,6 +171,7 @@ LandmarkObs ParticleFilter::glob2particle(Map::single_landmark_s g_lnmk, Particl
 	lndMkObs.y = obs(1,0);
 	return lndMkObs;
 }
+*/
 
 void ParticleFilter::resample() {
 	// TODO: Resample particles with replacement with probability proportional to their weight.

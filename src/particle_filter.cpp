@@ -112,6 +112,8 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
 	// predict measurements to all landmarks within sensor range for each particle (get predicted landmark measurements)
 	double sum_weigths = 0;
 	for (auto it_prtcl = particles.begin(); it_prtcl< particles.end(); it_prtcl++){
+		std::vector<int> associations_id; std::vector<double> sense_x; std::vector<double> sense_y;
+
 		Particle& prtcl = *it_prtcl;
 		std::vector<LandmarkObs> predicted;
 		for (auto it_lndMrk = map_landmarks.landmark_list.begin();
@@ -121,11 +123,14 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
 			double dist = sqrt( pow( lndMrk.x_f - prtcl.x ,2) + pow( lndMrk.y_f - prtcl.y ,2));
 			if (dist < sensor_range){
 				// transform landmark to particle coordinate
+				associations_id.push_back(lndMrk.id_i);
+				sense_x.push_back(lndMrk.x_f);
+				sense_y.push_back(lndMrk.y_f);
 				LandmarkObs pred_lm = glob2particle(lndMrk,prtcl);
 				predicted.push_back(pred_lm);
 			}
 		}
-
+		prtcl = SetAssociations(prtcl,associations_id,sense_x,sense_y);
 		// use dataAssociation to associate sensor measurements to map landmarks
 		dataAssociation(predicted,observations);
 

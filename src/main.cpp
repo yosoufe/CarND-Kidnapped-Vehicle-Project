@@ -2,7 +2,7 @@
 #include <iostream>
 #include "json.hpp"
 #include <math.h>
-#include "particle_filter.h"
+#include "particle_filter.cuh"
 
 using namespace std;
 

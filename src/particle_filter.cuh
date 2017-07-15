@@ -32,8 +32,6 @@ struct Particle {
 
 class ParticleFilter {
 	
-	// Number of particles to draw
-	int num_particles;
 
 	// Flag, if filter is initialized
 	bool is_initialized;
@@ -42,6 +40,9 @@ class ParticleFilter {
 	double *weights;
 	
 public:
+	Particle *h_d_particles;
+	// Number of particles to draw
+	int num_particles;
 
 	// Set of current particles
 	std::vector<Particle> particles;
@@ -81,7 +82,7 @@ public:
 	 * @param predicted Vector of predicted landmark observations
 	 * @param observations Vector of landmark observations
 	 */
-	void dataAssociation(std::vector<LandmarkObs> predicted, std::vector<LandmarkObs>& observations);
+	void dataAssociation(std::vector<LandmarkObs> predicted, std::vector<LandmarkObs> &observations);
 	
 	/**
 	 * updateWeights Updates the weights for each particle based on the likelihood of the
@@ -109,15 +110,15 @@ public:
 	}
 
 private:
-	Particle *h_d_particles;
+
 	curandState_t* randStates;
 	double* gps_std;
 	double* lmk_std;
 	dim3 dimBlock;
 	dim3 dimGrid;
-//	double *delta_t;
-//	double *velocity;
-//	double *yaw_rate;
+	cudaError_t ierrAsync;
+	cudaError_t ierrSync;
+	Map::single_landmark_s *lnd_mrks;
 };
 
 //#ifdef __cplusplus
@@ -138,10 +139,20 @@ void initParticlesGPU(struct Particle* prtcl,
 __global__
 void updateParticlesGPU(struct Particle* prtcl,
 												double delta_t,
-												double std_pos[],
+												double *std_pos,
 												double velocity,
 												double yaw_rate,
 												curandState_t* rState); // random generator's state
+
+__global__
+void updateWeightsGPU(struct Particle* prtcl,
+											double sensor_range,
+											double std_landmark[],
+											struct LandmarkObs *observations,
+											const int observations_size,
+											struct Map::single_landmark_s *lnd_mrks,
+											const int lnd_mrks_size,
+											curandState_t* rState);
 
 //#ifdef __cplusplus
 //} // extern "C"

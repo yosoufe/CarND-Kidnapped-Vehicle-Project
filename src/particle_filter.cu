@@ -95,9 +95,14 @@ void ParticleFilter::init(double x, double y, double theta, double std[]) {
 																				 theta,
 																				 gps_std,
 																				 randStates);
-	cudaDeviceSynchronize();
+	ierrSync = cudaGetLastError();
+	ierrAsync = cudaDeviceSynchronize();
+
+	if (ierrSync != cudaSuccess) { printf("Sync error: %s in init\n", cudaGetErrorString(ierrSync)); }
+	if (ierrAsync != cudaSuccess) { printf("Async error: %s  in init\n", cudaGetErrorString(ierrAsync)); }
+
 	for (int i = 0; i< 3; i++){
-		cout<<"====================="<< endl;;
+		cout<<"====================="<< endl;
 	}
 
 	for (int i = 0; i< NUM_PARTICLES; i+=20){
@@ -105,6 +110,7 @@ void ParticleFilter::init(double x, double y, double theta, double std[]) {
 					", y: " << h_d_particles[i].y << ", theta: "<< h_d_particles[i].theta << endl;
 	}
 
+	is_initialized = true;
 }
 
 void ParticleFilter::prediction(double delta_t, double std_pos[], double velocity, double yaw_rate) {
@@ -133,11 +139,30 @@ void ParticleFilter::prediction(double delta_t, double std_pos[], double velocit
 		prtcl.theta = dist_psi(gen);
 	}
 #endif //WITH_GPU
-
 	gps_std[0] = std_pos[0];
 	gps_std[1] = std_pos[1];
 	gps_std[2] = std_pos[2];
 
+	updateParticlesGPU<<<dimGrid,dimBlock>>>(h_d_particles,
+																					 delta_t,
+																					 gps_std,
+																					 velocity,
+																					 yaw_rate,
+																					 randStates);
+	ierrSync = cudaGetLastError();
+	ierrAsync = cudaDeviceSynchronize();
+
+	if (ierrSync != cudaSuccess) { printf("Sync error: %s in predict\n", cudaGetErrorString(ierrSync)); }
+	if (ierrAsync != cudaSuccess) { printf("Async error: %s in predict\n", cudaGetErrorString(ierrAsync)); }
+
+	for (int i = 0; i< 3; i++){
+		cout<<"====================="<< endl;
+	}
+
+	for (int i = 0; i< NUM_PARTICLES; i+=20){
+		cout<<"Particle: " <<h_d_particles[i].id << ", x: " << h_d_particles[i].x <<
+					", y: " << h_d_particles[i].y << ", theta: "<< h_d_particles[i].theta << endl;
+	}
 
 }
 
@@ -172,6 +197,56 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
 	//   and the following is a good resource for the actual equation to implement (look at equation
 	//   3.33
 	//   http://planning.cs.uiuc.edu/node99.html
+
+	LandmarkObs *observations_arr;
+	int observations_size = observations.size();
+	observations_arr = new LandmarkObs[observations_size];
+	// allocate memory
+	cudaMallocManaged(&observations_arr, observations_size * sizeof(LandmarkObs));
+	std::copy(observations_arr.begin(),observations_arr.end(),observations_arr);
+	//observations_arr = observations.data();
+	//memcpy(observations_arr,observations.data(),observations_size * sizeof(LandmarkObs));
+	//for (int i=0;i<observations_size;i++)
+	//	observations_arr[i] = observations[i];
+
+	bool static land_marks_are_copied = false;
+	static int lnd_mrks_size;
+	if (!land_marks_are_copied){
+		land_marks_are_copied = true;
+		lnd_mrks_size = map_landmarks.landmark_list.size();
+		lnd_mrks = new Map::single_landmark_s[lnd_mrks_size];
+		cudaMallocManaged(&lnd_mrks, lnd_mrks_size * sizeof(Map::single_landmark_s));
+		//std::copy(map_landmarks.landmark_list.begin(),map_landmarks.landmark_list.end(),lnd_mrks);
+		//lnd_mrks = map_landmarks.landmark_list.data();
+		//memcpy(lnd_mrks,map_landmarks.landmark_list.data(),lnd_mrks_size * sizeof(Map::single_landmark_s));
+		for (int i=0;i<lnd_mrks_size;i++)
+				lnd_mrks[i] = map_landmarks.landmark_list[i];
+	}
+
+
+	lmk_std[0] = std_landmark[0];
+	lmk_std[1] = std_landmark[1];
+
+	// allocate memory for observations_arr, lnd_mrks (no need to copy, const, but now copying)
+
+	updateWeightsGPU<<<dimGrid,dimBlock>>>(h_d_particles,
+																				 sensor_range,
+																				 lmk_std,
+																				 observations_arr,
+																				 observations_size,
+																				 lnd_mrks,
+																				 lnd_mrks_size,
+																				 randStates);
+	ierrSync = cudaGetLastError();
+	ierrAsync = cudaDeviceSynchronize();
+
+	if (ierrSync != cudaSuccess) { printf("Sync error: %s in update\n", cudaGetErrorString(ierrSync)); }
+	if (ierrAsync != cudaSuccess) { printf("Async error: %s  in update\n", cudaGetErrorString(ierrAsync)); }
+	cudaFree(observations_arr);
+
+	//normalise the weights??
+
+	//what about re sampling
 
 #ifndef WITH_GPU
 	// predict measurements to all landmarks within sensor range for each particle (get predicted landmark measurements)
@@ -221,11 +296,6 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
 		weights[it_prtcl - particles.begin()] /= sum_weigths;
 	}
 #endif
-
-	lmk_std[0] = std_landmark[0];
-	lmk_std[1] = std_landmark[1];
-
-
 }
 
 void ParticleFilter::resample() {
@@ -249,6 +319,7 @@ ParticleFilter::~ParticleFilter(){
 	cudaFree(randStates);
 	cudaFree(gps_std);
 	cudaFree(lmk_std);
+	cudaFree(lnd_mrks);
 }
 
 __global__
@@ -270,7 +341,7 @@ void initParticlesGPU(struct Particle* prtcl,
 	if (idx < NUM_PARTICLES){
 
 		double noisy_x = x + curand_normal_double(&rState[idx]) * std[0];
-		double noisy_y = y +curand_normal_double(&rState[idx]) * std[1];
+		double noisy_y = y + curand_normal_double(&rState[idx]) * std[1];
 		double noisy_theta = theta + curand_normal_double(&rState[idx]) * std[2];
 
 		prtcl[idx].id = idx;
@@ -290,6 +361,81 @@ void updateParticlesGPU(struct Particle* prtcl,
 												curandState_t* rState){ // random generator's state
 	int idx = threadIdx.x + blockDim.x * blockIdx.x;
 	if (idx < NUM_PARTICLES){
+		double x = prtcl[idx].x + velocity * cos(prtcl[idx].theta) * delta_t;
+		double y = prtcl[idx].y + velocity * sin(prtcl[idx].theta) * delta_t;
+		double theta = prtcl[idx].theta + yaw_rate * delta_t;
 
+		prtcl[idx].x = x + curand_normal_double(&rState[idx]) * std_pos[0];
+		prtcl[idx].y = y + curand_normal_double(&rState[idx]) * std_pos[1];
+		prtcl[idx].theta = theta + curand_normal_double(&rState[idx]) * std_pos[2];
+	}
+}
+
+
+__global__
+void updateWeightsGPU(struct Particle* prtcl,
+											double sensor_range,
+											double *std_landmark,
+											struct LandmarkObs *observations,
+											const int observations_size,
+											struct Map::single_landmark_s *lnd_mrks,
+											const int lnd_mrks_size,
+											curandState_t* rState){ // random generator's state
+	int idx = threadIdx.x + blockDim.x * blockIdx.x;
+	if (idx < NUM_PARTICLES){
+		// copy to local memory for faster operation.
+		double p_x = prtcl[idx].x;
+		double p_y = prtcl[idx].y;
+		double p_theta = prtcl[idx].theta;
+		//double p_id = prtcl[idx].id;
+		double p_weight = 1;
+		double *dist = new double[lnd_mrks_size];
+
+		// count how many of the landmarks are in the particle sensor range
+		int n_obs_in_range = 0;
+		for (int i=0; i<lnd_mrks_size;i++){
+			dist[i] = sqrt( pow( lnd_mrks[i].x_f - p_x,2) + pow( lnd_mrks[i].y_f - p_y ,2));
+			if (dist[i] < sensor_range)
+				n_obs_in_range++;
+		}
+
+		// initialise the predicted measurements for land marks
+		// and transfer the measurements into particle coordinate
+		struct LandmarkObs *predicted = new struct LandmarkObs[n_obs_in_range];
+		int j=0;
+		for (int i=0; i<lnd_mrks_size;i++){
+			if (dist[i] < sensor_range){
+				predicted[j].id = lnd_mrks[i].id_i;
+
+				// transfer landmark position into particle coordinate
+				predicted[j].x = cos(p_theta)*((double)lnd_mrks[i].x_f - p_x) + sin(p_theta)*((double)lnd_mrks[i].y_f - p_y);
+				predicted[j].y = cos(p_theta)*((double)lnd_mrks[i].y_f - p_y) + sin(p_theta)*(p_x - (double)lnd_mrks[i].x_f);
+				j++;
+			}
+		}
+
+		// assign for each observation, the closest prediction
+		// for each observation finr the closest predicted landmark
+		for (int i_obs = 0; i_obs<observations_size; i_obs++){ // loop over observations
+			double final_dist = INFINITY; // final distance
+			for(int i_prd = 0; i_prd<n_obs_in_range; i_prd++){// loop over predictions
+				double dist_p_o = sqrt ( pow( observations[i_obs].x - predicted[i_prd].x ,2) +
+																 pow( observations[i_obs].y - predicted[i_prd].y ,2));
+				if (dist_p_o < final_dist){
+					final_dist = dist_p_o;
+					observations[i_obs].id = i_prd; //index of associated prediction in `predicted` array
+				}
+			}
+		}
+
+
+		// loop over observations and
+		for (int i_obs=0; i_obs<observations_size; i_obs++){
+			double delta_x = predicted[observations[i_obs].id].x - observations[i_obs].x;
+			double delta_y = predicted[observations[i_obs].id].y - observations[i_obs].y;
+			double argu = pow(delta_x*std_landmark[0],2) + pow(delta_y*std_landmark[1],2);
+			p_weight *= exp(-0.5 * argu)/2/M_PI/std_landmark[0]/std_landmark[1];
+		}
+		prtcl[idx].weight = p_weight;
 	}
 }

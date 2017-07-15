@@ -203,9 +203,9 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
 	observations_arr = new LandmarkObs[observations_size];
 	// allocate memory
 	cudaMallocManaged(&observations_arr, observations_size * sizeof(LandmarkObs));
-	std::copy(observations_arr.begin(),observations_arr.end(),observations_arr);
+	//std::copy(observations_arr.begin(),observations_arr.end(),observations_arr);
 	//observations_arr = observations.data();
-	//memcpy(observations_arr,observations.data(),observations_size * sizeof(LandmarkObs));
+	memcpy(observations_arr,observations.data(),observations_size * sizeof(LandmarkObs));
 	//for (int i=0;i<observations_size;i++)
 	//	observations_arr[i] = observations[i];
 

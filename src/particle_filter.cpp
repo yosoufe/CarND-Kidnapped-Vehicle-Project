@@ -17,10 +17,6 @@
 
 #include "particle_filter.h"
 
-#ifdef WITH_GPU
-#include "particle_filter.cuh"
-#endif // WITH_GPU
-
 using namespace std;
 
 void ParticleFilter::init(double x, double y, double theta, double std[]) {
@@ -29,7 +25,7 @@ void ParticleFilter::init(double x, double y, double theta, double std[]) {
 	// Add random Gaussian noise to each particle.
 	// NOTE: Consult particle_filter.h for more information about this method (and others in this file).
 
-	num_particles = 100;
+	num_particles = NUM_PARTICLES;
 	weights = new double [num_particles];
 	double std_x = std[0];
 	double std_y = std[1];
@@ -56,8 +52,20 @@ void ParticleFilter::init(double x, double y, double theta, double std[]) {
 #endif //WITH_GPU
 #ifdef WITH_GPU
 	// allocate memory in GPU for particles
-	int size = num_particles * sizeof(Particle);
-	cudaMallocManaged(&h_d_particles, size);
+	cudaMallocManaged(&h_d_particles, num_particles * sizeof(Particle));
+	// allocate memory in GPU for random number creation state objects.
+	cudaMallocManaged(&randStates, num_particles * sizeof(curandState_t));
+
+	// initialise the random generation states:
+	dim3 dimBlock(NUM_THRDS_IN_BLCK , 1 ,1);
+	dim3 dimGrid (NUM_PARTICLES/NUM_THRDS_IN_BLCK+1 , 1 ,1);
+	setup_random_generation<<<dimGrid,dimBlock>>>(randStates);
+
+
+	// each thread should initilise each particle in random distribution. (cuRAND library)
+	// http://cs.umw.edu/~finlayson/class/fall16/cpsc425/notes/cuda-random.html
+	// CURAND_ORDERING_QUASI_DEFAULT
+
 
 #endif // WITH_GPU
 }
@@ -193,4 +201,11 @@ void ParticleFilter::resample() {
 		new_particles.push_back(particles[number]);
 	}
 	particles = new_particles;
+}
+
+ParticleFilter::~ParticleFilter(){
+#ifdef WITH_GPU
+	cudaFree(h_d_particles);
+	cudaFree(randStates);
+#endif // WITH_GPU
 }

@@ -11,8 +11,16 @@
 
 #include "helper_functions.h"
 
-struct Particle {
+#ifdef WITH_GPU
+#include "particle_filter.cuh"
 
+#define NUM_THRDS_IN_BLCK 1024
+
+#endif // WITH_GPU
+
+#define NUM_PARTICLES 100
+
+struct Particle {
 	int id;
 	double x;
 	double y;
@@ -34,7 +42,11 @@ class ParticleFilter {
 	double *weights;
 	
 public:
-	
+
+#ifdef WITH_GPU
+	Particle *h_d_particles;
+	curandState_t* randStates;
+#endif // WITH_GPU
 	// Set of current particles
 	std::vector<Particle> particles;
 
@@ -43,7 +55,7 @@ public:
 	ParticleFilter() : num_particles(0), is_initialized(false) {}
 
 	// Destructor
-	~ParticleFilter() {}
+	~ParticleFilter();
 
 	/**
 	 * init Initializes particle filter by initializing particles to Gaussian

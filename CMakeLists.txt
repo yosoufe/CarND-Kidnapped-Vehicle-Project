@@ -20,13 +20,12 @@ endif(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 option(WITH_GPU "Enable GPU" OFF)
 
 IF(WITH_GPU)
-    set(sourcesCPP src/main.cpp src/particle_filter.cpp
-        src/particle_filter.h src/map.h src/helper_functions.h)
-    set(sourcesCUDA src/particle_filter.cu src/particle_filter.cuh)
-    #ADD_LIBRARY(CPPpart STATIC ${sourcesCPP})
+    set(sourcesCPP src/main.cpp src/map.h src/helper_functions.h)
+    set(sourcesCUDA src/particle_filter.cu src/particle_filter.cuh src/particle_filter.cpp src/particle_filter.h)
     find_package(CUDA QUIET REQUIRED)
     ADD_DEFINITIONS(-DWITH_GPU)
-    CUDA_ADD_EXECUTABLE(particle_filter ${sourcesCUDA} ${sourcesCPP})
+    cuda_compile(CUDA_OBJECTS ${sourcesCUDA})
+    CUDA_ADD_EXECUTABLE(particle_filter ${sourcesCPP} ${sourcesCUDA})
 ELSE(WITH_GPU)
     set(sources src/main.cpp src/particle_filter.cpp
         src/particle_filter.h src/map.h src/helper_functions.h)

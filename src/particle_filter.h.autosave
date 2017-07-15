@@ -35,6 +35,9 @@ class ParticleFilter {
 	
 public:
 	
+	#ifdef WITH_GPU
+		Particle *h_d_particles;
+	#endif // WITH_GPU
 	// Set of current particles
 	std::vector<Particle> particles;
 

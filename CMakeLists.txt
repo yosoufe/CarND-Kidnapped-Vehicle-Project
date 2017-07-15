@@ -1,16 +1,11 @@
 project(PARTICLE_FILTER)
 
-cmake_minimum_required (VERSION 3.5)
+cmake_minimum_required (VERSION 3.3)
 
 add_definitions(-std=c++11)
 
-find_package(CUDA QUIET REQUIRED)
-
 set(CXX_FLAGS "-Wall")
 set(CMAKE_CXX_FLAGS, "${CXX_FLAGS}")
-
-set(sources src/main.cpp src/particle_filter.cpp src/map.h src/helper_functions.h)
-
 
 if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin") 
 
@@ -22,8 +17,21 @@ link_directories(/usr/local/Cellar/libuv/1.11.0/lib)
 
 endif(${CMAKE_SYSTEM_NAME} MATCHES "Darwin") 
 
+option(WITH_GPU "Enable GPU" OFF)
 
-CUDA_ADD_EXECUTABLE(particle_filter ${sources})
+IF(WITH_GPU)
+    set(sourcesCPP src/main.cpp src/particle_filter.cpp
+        src/particle_filter.h src/map.h src/helper_functions.h)
+    set(sourcesCUDA src/particle_filter.cu src/particle_filter.cuh)
+    #ADD_LIBRARY(CPPpart STATIC ${sourcesCPP})
+    find_package(CUDA QUIET REQUIRED)
+    ADD_DEFINITIONS(-DWITH_GPU)
+    CUDA_ADD_EXECUTABLE(particle_filter ${sourcesCUDA} ${sourcesCPP})
+ELSE(WITH_GPU)
+    set(sources src/main.cpp src/particle_filter.cpp
+        src/particle_filter.h src/map.h src/helper_functions.h)
+    ADD_EXECUTABLE(particle_filter ${sources})
+ENDIF(WITH_GPU)
 
 
 target_link_libraries(particle_filter z ssl uv uWS)

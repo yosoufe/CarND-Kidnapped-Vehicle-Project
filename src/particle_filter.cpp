@@ -17,6 +17,10 @@
 
 #include "particle_filter.h"
 
+#ifdef WITH_GPU
+#include "particle_filter.cuh"
+#endif // WITH_GPU
+
 using namespace std;
 
 void ParticleFilter::init(double x, double y, double theta, double std[]) {
@@ -24,11 +28,14 @@ void ParticleFilter::init(double x, double y, double theta, double std[]) {
 	//   x, y, theta and their uncertainties from GPS) and all weights to 1.
 	// Add random Gaussian noise to each particle.
 	// NOTE: Consult particle_filter.h for more information about this method (and others in this file).
+
 	num_particles = 100;
+	weights = new double [num_particles];
 	double std_x = std[0];
 	double std_y = std[1];
 	double std_psi = std[2];
 
+#ifndef WITH_GPU
 	// This line creates a normal (Gaussian) distribution.
 	normal_distribution<double> dist_x(x, std_x);
 	normal_distribution<double> dist_y(y, std_y);
@@ -42,10 +49,17 @@ void ParticleFilter::init(double x, double y, double theta, double std[]) {
 										dist_y(gen),
 										dist_psi(gen)}; // TODO: Shall I define the rest using other functions??
 		particles.push_back(prtcl);
-		weights.push_back(1);
+		weights[i]=1;
 	}
 
 	is_initialized = true;
+#endif //WITH_GPU
+#ifdef WITH_GPU
+	// allocate memory in GPU for particles
+	int size = num_particles * sizeof(Particle);
+	cudaMallocManaged(&h_d_particles, size);
+
+#endif // WITH_GPU
 }
 
 void ParticleFilter::prediction(double delta_t, double std_pos[], double velocity, double yaw_rate) {
@@ -59,6 +73,7 @@ void ParticleFilter::prediction(double delta_t, double std_pos[], double velocit
 	default_random_engine gen;
 	double x,y,theta;
 
+#ifndef WITH_GPU
 	for (auto it = particles.begin(); it < particles.end(); it++){
 		Particle& prtcl = *it;
 		x = prtcl.x + velocity * cos(prtcl.theta) * delta_t;
@@ -72,8 +87,15 @@ void ParticleFilter::prediction(double delta_t, double std_pos[], double velocit
 		prtcl.x = dist_x(gen);
 		prtcl.y = dist_y(gen);
 		prtcl.theta = dist_psi(gen);
-
 	}
+#endif //WITH_GPU
+#ifdef WITH_GPU
+
+
+	// normal random number generation in cuda cuRAND
+	//
+
+#endif // WITH_GPU
 
 }
 
@@ -122,15 +144,17 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
 
 			double dist = sqrt( pow( lndMrk.x_f - prtcl.x ,2) + pow( lndMrk.y_f - prtcl.y ,2));
 			if (dist < sensor_range){
+
 				// transform landmark to particle coordinate
-				associations_id.push_back(lndMrk.id_i);
-				sense_x.push_back(lndMrk.x_f);
-				sense_y.push_back(lndMrk.y_f);
-				LandmarkObs pred_lm = glob2particle(lndMrk,prtcl);
+				LandmarkObs pred_lm; // = glob2particle(lndMrk,prtcl)
+				pred_lm.x = cos(prtcl.theta)*((double)lndMrk.x_f - prtcl.x) + sin(prtcl.theta)*((double)lndMrk.y_f - prtcl.y);
+				pred_lm.y = cos(prtcl.theta)*((double)lndMrk.y_f - prtcl.y) + sin(prtcl.theta)*(prtcl.x - (double)lndMrk.x_f);
+				pred_lm.id = lndMrk.id_i;
+
 				predicted.push_back(pred_lm);
 			}
 		}
-		prtcl = SetAssociations(prtcl,associations_id,sense_x,sense_y);
+
 		// use dataAssociation to associate sensor measurements to map landmarks
 		dataAssociation(predicted,observations);
 
@@ -155,26 +179,13 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
 	}
 }
 
-LandmarkObs ParticleFilter::glob2particle(Map::single_landmark_s g_lnmk, Particle particle){
-	LandmarkObs lndMkObs;
-	Eigen::MatrixXd R_c2g(2,2);
-	Eigen::MatrixXd t_c2g(2,1);
-	Eigen::MatrixXd lndMk_g(2,1); lndMk_g << g_lnmk.x_f,g_lnmk.y_f;
-	R_c2g << cos(particle.theta) , -sin(particle.theta) , sin(particle.theta), cos(particle.theta);
-	t_c2g << particle.x, particle.y;
-	Eigen::MatrixXd R_c2g_trans=R_c2g.transpose();
-	Eigen::MatrixXd obs = R_c2g_trans * lndMk_g - R_c2g_trans*t_c2g;
-	lndMkObs.id=g_lnmk.id_i;
-	lndMkObs.x = obs(0,0);
-	lndMkObs.y = obs(1,0);
-	return lndMkObs;
-}
-
 void ParticleFilter::resample() {
 	// TODO: Resample particles with replacement with probability proportional to their weight.
 	// NOTE: You may find std::discrete_distribution helpful here.
 	//   http://en.cppreference.com/w/cpp/numeric/random/discrete_distribution
-	discrete_distribution<int> resampler(weights.begin(),weights.end());
+	std::vector<double> weights_vect(weights, weights + num_particles);
+
+	discrete_distribution<int> resampler(weights_vect.begin(),weights_vect.end());
 	vector<Particle> new_particles;
 	default_random_engine generator;
 	for (int i=0; i< num_particles ; i++) {
@@ -182,51 +193,4 @@ void ParticleFilter::resample() {
 		new_particles.push_back(particles[number]);
 	}
 	particles = new_particles;
-}
-
-Particle ParticleFilter::SetAssociations(Particle particle, std::vector<int> associations, std::vector<double> sense_x, std::vector<double> sense_y)
-{
-	//particle: the particle to assign each listed association, and association's (x,y) world coordinates mapping to
-	// associations: The landmark id that goes along with each listed association
-	// sense_x: the associations x mapping already converted to world coordinates
-	// sense_y: the associations y mapping already converted to world coordinates
-
-	//Clear the previous associations
-	particle.associations.clear();
-	particle.sense_x.clear();
-	particle.sense_y.clear();
-
-	particle.associations= associations;
-	particle.sense_x = sense_x;
-	particle.sense_y = sense_y;
-
-	return particle;
-}
-
-string ParticleFilter::getAssociations(Particle best)
-{
-	vector<int> v = best.associations;
-	stringstream ss;
-	copy( v.begin(), v.end(), ostream_iterator<int>(ss, " "));
-	string s = ss.str();
-	s = s.substr(0, s.length()-1);  // get rid of the trailing space
-	return s;
-}
-string ParticleFilter::getSenseX(Particle best)
-{
-	vector<double> v = best.sense_x;
-	stringstream ss;
-	copy( v.begin(), v.end(), ostream_iterator<float>(ss, " "));
-	string s = ss.str();
-	s = s.substr(0, s.length()-1);  // get rid of the trailing space
-	return s;
-}
-string ParticleFilter::getSenseY(Particle best)
-{
-	vector<double> v = best.sense_y;
-	stringstream ss;
-	copy( v.begin(), v.end(), ostream_iterator<float>(ss, " "));
-	string s = ss.str();
-	s = s.substr(0, s.length()-1);  // get rid of the trailing space
-	return s;
 }

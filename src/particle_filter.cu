@@ -159,9 +159,10 @@ void ParticleFilter::prediction(double delta_t, double std_pos[], double velocit
 		cout<<"====================="<< endl;
 	}
 
-	for (int i = 0; i< NUM_PARTICLES; i+=20){
+	for (int i = 0; i< NUM_PARTICLES; i+=NUM_PARTICLES/4){
 		cout<<"Particle: " <<h_d_particles[i].id << ", x: " << h_d_particles[i].x <<
-					", y: " << h_d_particles[i].y << ", theta: "<< h_d_particles[i].theta << endl;
+					", y: " << h_d_particles[i].y << ", theta: "<< h_d_particles[i].theta <<
+					", weight: "<< h_d_particles[i].weight << endl;
 	}
 
 }
@@ -223,20 +224,17 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
 				lnd_mrks[i] = map_landmarks.landmark_list[i];
 	}
 
-
 	lmk_std[0] = std_landmark[0];
 	lmk_std[1] = std_landmark[1];
 
 	// allocate memory for observations_arr, lnd_mrks (no need to copy, const, but now copying)
-
 	updateWeightsGPU<<<dimGrid,dimBlock>>>(h_d_particles,
 																				 sensor_range,
 																				 lmk_std,
 																				 observations_arr,
 																				 observations_size,
 																				 lnd_mrks,
-																				 lnd_mrks_size,
-																				 randStates);
+																				 lnd_mrks_size);
 	ierrSync = cudaGetLastError();
 	ierrAsync = cudaDeviceSynchronize();
 
@@ -302,6 +300,16 @@ void ParticleFilter::resample() {
 	// TODO: Resample particles with replacement with probability proportional to their weight.
 	// NOTE: You may find std::discrete_distribution helpful here.
 	//   http://en.cppreference.com/w/cpp/numeric/random/discrete_distribution
+
+	resampleGPU<<<dimGrid,dimBlock>>>(h_d_particles,
+																		randStates);
+	ierrSync = cudaGetLastError();
+	ierrAsync = cudaDeviceSynchronize();
+
+	if (ierrSync != cudaSuccess) { printf("Sync error: %s in resample\n", cudaGetErrorString(ierrSync)); }
+	if (ierrAsync != cudaSuccess) { printf("Async error: %s  in resample\n", cudaGetErrorString(ierrAsync)); }
+
+#ifndef WITH_GPU
 	std::vector<double> weights_vect(weights, weights + num_particles);
 
 	discrete_distribution<int> resampler(weights_vect.begin(),weights_vect.end());
@@ -312,6 +320,8 @@ void ParticleFilter::resample() {
 		new_particles.push_back(particles[number]);
 	}
 	particles = new_particles;
+#endif
+
 }
 
 ParticleFilter::~ParticleFilter(){
@@ -379,8 +389,7 @@ void updateWeightsGPU(struct Particle* prtcl,
 											struct LandmarkObs *observations,
 											const int observations_size,
 											struct Map::single_landmark_s *lnd_mrks,
-											const int lnd_mrks_size,
-											curandState_t* rState){ // random generator's state
+											const int lnd_mrks_size){ // random generator's state
 	int idx = threadIdx.x + blockDim.x * blockIdx.x;
 	if (idx < NUM_PARTICLES){
 		// copy to local memory for faster operation.
@@ -399,6 +408,10 @@ void updateWeightsGPU(struct Particle* prtcl,
 				n_obs_in_range++;
 		}
 
+//		if (idx == 50){
+//			printf("particle %d num of lnd %d.\n", idx, n_obs_in_range);
+//		}
+
 		// initialise the predicted measurements for land marks
 		// and transfer the measurements into particle coordinate
 		struct LandmarkObs *predicted = new struct LandmarkObs[n_obs_in_range];
@@ -414,8 +427,12 @@ void updateWeightsGPU(struct Particle* prtcl,
 			}
 		}
 
+//		if (idx == 50){
+//			printf("particle %d j: %d, x: %f, y:%f.\n", idx, j, predicted[0].x,predicted[0].y);
+//		}
+
 		// assign for each observation, the closest prediction
-		// for each observation finr the closest predicted landmark
+		// for each observation find the closest predicted landmark
 		for (int i_obs = 0; i_obs<observations_size; i_obs++){ // loop over observations
 			double final_dist = INFINITY; // final distance
 			for(int i_prd = 0; i_prd<n_obs_in_range; i_prd++){// loop over predictions
@@ -434,8 +451,59 @@ void updateWeightsGPU(struct Particle* prtcl,
 			double delta_x = predicted[observations[i_obs].id].x - observations[i_obs].x;
 			double delta_y = predicted[observations[i_obs].id].y - observations[i_obs].y;
 			double argu = pow(delta_x*std_landmark[0],2) + pow(delta_y*std_landmark[1],2);
-			p_weight *= exp(-0.5 * argu)/2/M_PI/std_landmark[0]/std_landmark[1];
+
+			p_weight = p_weight * exp(-0.5 * argu)/2.0/M_PI/std_landmark[0]/std_landmark[1];
+
+//			if (p_weight > 0.01){
+//				printf("particle %d, obs %d, x %f, y %f,delta_X %f, delta_Y %f, argu %f, term %f, weight %f, std_landmark[0] %f, std_landmark[1] %f\n",
+//							 idx,i_obs,observations[i_obs].x,observations[i_obs].y,delta_x,delta_y,argu,exp(-0.5 * argu),
+//						p_weight,std_landmark[0],std_landmark[1]);
+//			}
 		}
 		prtcl[idx].weight = p_weight;
+//		if (p_weight > 0.01){
+//			printf("particle %d, weight %f ?= %f \n",idx,p_weight,prtcl[idx].weight);
+//		}
+
+//		if (idx == 50){
+//			printf("particle %d new weight %f.\n", idx, prtcl[idx].weight);
+//		}
+	}
+}
+
+// https://arxiv.org/abs/1202.6163
+__global__
+void resampleGPU(struct Particle* prtcl,
+								 curandState_t* rState){
+	int idx = threadIdx.x + blockDim.x * blockIdx.x;
+
+	if (idx < NUM_PARTICLES){
+		int final_taken_index = idx;
+		for(int i = 0; i < RESAMPLE_LOOP ; i++ ){
+			double u = curand_uniform_double(&rState[idx]);
+			double ran = curand_uniform_double(&rState[idx]) ;
+			unsigned int q = (unsigned int)(ran* NUM_PARTICLES);
+			if (u <= prtcl[q].weight / prtcl[final_taken_index].weight)
+				final_taken_index = q;
+
+//			if (idx == 50){
+//				printf("particle %d, rand %f, check %d: %f <=? %f, new taken %d.\n",
+//							 idx,ran, q, u, prtcl[q].weight / prtcl[final_taken_index].weight, final_taken_index);
+//			}
+		}
+//		if (idx == 50){
+//			printf("Substitute fot particle %d is %d.\n", prtcl[idx].id, final_taken_index);
+//		}
+		int id_temp = prtcl[final_taken_index].id;
+		double x_temp = prtcl[final_taken_index].x;
+		double y_temp = prtcl[final_taken_index].y;
+		double theta_temp = prtcl[final_taken_index].theta;
+		double weight_temp = prtcl[final_taken_index].weight;
+		__syncthreads();
+		prtcl[idx].id = id_temp;
+		prtcl[idx].x = x_temp;
+		prtcl[idx].y = y_temp;
+		prtcl[idx].theta = theta_temp;
+		prtcl[idx].weight = weight_temp;
 	}
 }

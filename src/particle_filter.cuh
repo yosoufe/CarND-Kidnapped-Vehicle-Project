@@ -11,14 +11,16 @@
 
 #include "helper_functions.h"
 
-
+#include <stdio.h>
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <curand.h>
 #include <curand_kernel.h>
+//#include <cuda_device_runtime_api.h>
 
 #define NUM_THRDS_IN_BLCK 1024
 #define NUM_PARTICLES 100
+#define RESAMPLE_LOOP int(NUM_PARTICLES/5)
 
 struct Particle {
 	int id;
@@ -118,7 +120,7 @@ private:
 	dim3 dimGrid;
 	cudaError_t ierrAsync;
 	cudaError_t ierrSync;
-	Map::single_landmark_s *lnd_mrks;
+	Map::single_landmark_s* lnd_mrks;
 };
 
 //#ifdef __cplusplus
@@ -151,8 +153,11 @@ void updateWeightsGPU(struct Particle* prtcl,
 											struct LandmarkObs *observations,
 											const int observations_size,
 											struct Map::single_landmark_s *lnd_mrks,
-											const int lnd_mrks_size,
-											curandState_t* rState);
+											const int lnd_mrks_size);
+
+__global__
+void resampleGPU(struct Particle* prtcl,
+								 curandState_t* rState);
 
 //#ifdef __cplusplus
 //} // extern "C"

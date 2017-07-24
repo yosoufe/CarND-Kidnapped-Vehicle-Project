@@ -1,6 +1,6 @@
 project(PARTICLE_FILTER)
 
-cmake_minimum_required (VERSION 3.3)
+cmake_minimum_required (VERSION 3.5)
 
 add_definitions(-std=gnu++11)
 
